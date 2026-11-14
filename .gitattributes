@@ -1,0 +1,10 @@
+# 统一走 LF：这些脚本要在 Linux 上直接执行，CRLF 会导致 "bad interpreter"
+* text=auto eol=lf
+*.sh text eol=lf
+*.ts text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.png binary
+*.jpg binary
+*.gz binary
