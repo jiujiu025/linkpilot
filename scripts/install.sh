@@ -222,6 +222,42 @@ EOF
   done
   ip link set "$WAN_IF" up
 
+  # 开机要把网桥重新建起来：ip 命令不持久化，只写 interfaces 文件在 Debian 13 上
+  # 还需要 bridge-utils，出问题时表现为「重启后 LAN 没了、手机拿不到 IP」。
+  # 这里用一条 oneshot 单元重放同样的命令，幂等且不依赖 ifupdown 的实现细节。
+  cat > /usr/local/sbin/linkpilot-network.sh <<NETEOF
+#!/bin/sh
+set -e
+BR=$BR
+ip link show \$BR >/dev/null 2>&1 || ip link add name \$BR type bridge
+ip link set \$BR up
+ip addr flush dev \$BR || true
+ip addr add ${GATEWAY_IP}/24 dev \$BR
+for port in $LAN_IFS; do
+  ip link set \$port master \$BR 2>/dev/null || true
+  ip link set \$port up
+done
+ip link set $WAN_IF up
+NETEOF
+  chmod 0755 /usr/local/sbin/linkpilot-network.sh
+
+  cat > /etc/systemd/system/linkpilot-network.service <<'UNITEOF'
+[Unit]
+Description=LinkPilot network baseline (bridge + LAN address)
+After=network.target
+Before=dnsmasq.service linkpilot-agent.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/linkpilot-network.sh
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+  systemctl daemon-reload
+  systemctl enable -q linkpilot-network
+
   cat > /etc/dnsmasq.d/linkpilot.conf <<EOF
 interface=$BR
 bind-dynamic
@@ -234,6 +270,11 @@ no-hosts
 EOF
   systemctl restart dnsmasq
   ok "网桥 $BR = $GATEWAY_IP · DHCP 192.168.10.50–250 · 转发开启 · IPv6 关闭"
+
+  # WAN 没拿到地址就是没外网，装完也拉不到云端，必须当场提示
+  if ! ip -4 addr show "$WAN_IF" | grep -q "inet "; then
+    warn "WAN($WAN_IF) 还没有 IPv4 地址：如果是光猫拨号，请确认该网口已配置 DHCP；PPPoE 需另配 pppoeconf"
+  fi
   warn "刻意不配 NAT：出网必须走代理，配了就绕过 Kill Switch"
 fi
 
