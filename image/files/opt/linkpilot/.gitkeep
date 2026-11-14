@@ -1,0 +1,2 @@
+构建时由 image/build-inner.sh 把打包后的 agent.mjs 拷到本目录。
+本文件只用于让 git 保留目录结构。

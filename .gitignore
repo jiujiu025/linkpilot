@@ -1,0 +1,10 @@
+node_modules/
+runtime/
+*.log
+.DS_Store
+
+# 固件构建产物与中间物（体积大、可重现，不入库）
+dist/
+image/files/opt/linkpilot/agent.mjs
+image/files/etc/linkpilot/version
+image/files/etc/linkpilot/openwrt-version

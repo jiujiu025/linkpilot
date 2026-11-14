@@ -1,0 +1,132 @@
+#!/bin/sh
+#
+# LinkPilot 首启基线（uci-defaults，执行成功后本文件会被系统删除）
+#
+# 只做「与业务无关、但设备必须成立」的事：
+#   主机名/时区/NTP、WAN-LAN 网口划分、LAN 桥接、DHCP 池、DNS、IPv6 三层关闭。
+# 业务侧（授权设备、线路、分流）一律由云端下发、编译器生成，不在固件里硬编码。
+#
+# 幂等：可以重复执行；不要在这里写任何依赖外网的动作。
+
+. /lib/functions.sh
+
+log() { logger -t linkpilot "$*"; }
+
+# ---------------------------------------------------------------- 网口识别
+# N100 常见 2/4 口：按 PCI 顺序为 eth0..ethN。只取有 device 链接的物理口，
+# 跳过 br-/tun/wg 等虚拟设备；按数字后缀排序（eth10 排在 eth9 之后）。
+list_eth() {
+	for n in /sys/class/net/*; do
+		ifc=${n##*/}
+		case "$ifc" in
+			lo|br-*|tun*|tap*|wg*|lp-*|sit*|gre*) continue ;;
+		esac
+		[ -e "/sys/class/net/$ifc/device" ] || continue
+		echo "$ifc"
+	done | awk '{ s=$0; sub(/^[a-zA-Z]+/, "", s); print (s+0) "\t" $0 }' | sort -n | cut -f2-
+}
+
+ALL_NICS="$(list_eth)"
+NIC_COUNT="$(printf '%s\n' "$ALL_NICS" | grep -c . || true)"
+WAN_IF="$(printf '%s\n' "$ALL_NICS" | sed -n '1p')"
+LAN_IFS="$(printf '%s\n' "$ALL_NICS" | sed -n '2,$p')"
+
+if [ "$NIC_COUNT" -lt 2 ] || [ -z "$WAN_IF" ]; then
+	log "只识别到 ${NIC_COUNT} 个物理网口（${ALL_NICS:-无}），无法划分 WAN/LAN，请用控制台修网口"
+	echo "只识别到 ${NIC_COUNT} 个物理网口，WAN/LAN 未划分" > /etc/linkpilot/nic-warning
+else
+	log "网口规划：WAN=${WAN_IF} LAN=$(echo $LAN_IFS)"
+fi
+
+# ---------------------------------------------------------------- 系统
+if [ -r "/sys/class/net/${WAN_IF:-eth0}/address" ]; then
+	SUFFIX=$(tr -d ':' < "/sys/class/net/${WAN_IF:-eth0}/address" | tail -c 5 | tr 'a-f' 'A-F')
+	uci set system.@system[0].hostname="LinkPilot-${SUFFIX}"
+else
+	uci set system.@system[0].hostname='LinkPilot'
+fi
+uci set system.@system[0].timezone='CST-8'
+uci set system.@system[0].zonename='Asia/Shanghai'
+uci set system.@system[0].conloglevel='8'
+uci set system.@system[0].cronloglevel='9'
+
+# NTP：控制通道与签名校验都依赖时钟，必须能对上（直连，不走代理）
+uci set system.ntp.enabled='1'
+uci -q delete system.ntp.server
+uci add_list system.ntp.server='ntp.tencent.com'
+uci add_list system.ntp.server='ntp.aliyun.com'
+uci add_list system.ntp.server='cn.pool.ntp.org'
+uci add_list system.ntp.server='time.cloudflare.com'
+uci set system.ntp.enable_server='0'
+
+# ---------------------------------------------------------------- 网络
+# LAN 桥接：3 个 AP 必须在同一个二层域里（漫游要求），所以 LAN 口全部进 br-lan，
+# 不做"每口一个子网"。先删掉可能残留的 br-lan 设备段，避免端口叠加。
+uci show network 2>/dev/null | sed -n 's/^network\.\(@device\[[0-9]*\]\)=device$/\1/p' | while read -r sec; do
+	[ "$(uci -q get network.$sec.name)" = 'br-lan' ] && uci -q delete "network.$sec"
+done
+
+uci set network.brlan='device'
+uci set network.brlan.name='br-lan'
+uci set network.brlan.type='bridge'
+uci set network.brlan.stp='0'
+uci set network.brlan.igmp_snooping='1'
+if [ -n "$LAN_IFS" ]; then
+	for p in $LAN_IFS; do
+		uci add_list "network.brlan.ports=$p"
+	done
+fi
+
+uci set network.lan='interface'
+uci set network.lan.device='br-lan'
+uci set network.lan.proto='static'
+uci set network.lan.ipaddr='192.168.88.1'
+uci set network.lan.netmask='255.255.255.0'
+uci set network.lan.delegate='0'
+uci -q delete network.lan.ip6assign
+uci -q delete network.lan.ip6addr
+
+uci set network.wan='interface'
+uci set network.wan.device="${WAN_IF:-eth0}"
+uci set network.wan.proto='dhcp'
+uci set network.wan.peerdns='1'
+# 跨境专线场景若上行是 PPPoE，改成：
+#   uci set network.wan.proto='pppoe'; uci set network.wan.username=...; uci set network.wan.password=...
+
+# IPv6 三层关闭之一：不建立 wan6
+while uci -q delete network.wan6; do :; done
+
+# 多队列网卡把软中断摊到多核，N100 上能明显抬高小包转发上限
+uci set network.globals='globals'
+uci set network.globals.packet_steering='1'
+
+# ---------------------------------------------------------------- DHCP / DNS
+uci set dhcp.lan='dhcp'
+uci set dhcp.lan.interface='lan'
+uci set dhcp.lan.start='100'
+uci set dhcp.lan.limit='100'
+uci set dhcp.lan.leasetime='12h'
+uci set dhcp.lan.dhcp_option='6,192.168.88.1'
+# IPv6 三层关闭之二、之三：DHCPv6 与 RA 全关（第三层在 sysctl）
+uci set dhcp.lan.dhcpv6='disabled'
+uci set dhcp.lan.ra='disabled'
+uci set dhcp.lan.ndp='disabled'
+uci set dhcp.lan.ra_slaac='0'
+uci set dhcp.lan.ra_flags='none'
+
+uci set dhcp.@dnsmasq[0].domainneeded='1'
+uci set dhcp.@dnsmasq[0].rebindprotection='1'
+uci set dhcp.@dnsmasq[0].localservice='1'
+uci set dhcp.@dnsmasq[0].domain='lp.lan'
+# 不做上游缓存抢占：分流后的 DNS 由编译器接管到 tun，这里只保证基本可用
+uci set dhcp.@dnsmasq[0].cachesize='1000'
+
+# 静态租约区（200-250）留给 AP 与运维设备：
+#   AP 建议固定 192.168.88.2 / .3 / .4，并且必须在 DHCP 池之外，避免被终端抢走。
+
+uci commit system
+uci commit network
+uci commit dhcp
+
+log "首启基线完成：LAN=192.168.88.1/24，DHCP=100-199，IPv6 已关闭"
+exit 0

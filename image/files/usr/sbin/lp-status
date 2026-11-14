@@ -1,0 +1,91 @@
+#!/bin/sh
+#
+# LinkPilot 现场自检。设计目标：一根 SSH 进来，一条命令判断"这台机器是不是好的"。
+# 只读，不改任何状态。任何一项 ✗ 都要在交付前解决。
+
+. /etc/linkpilot/agent.env 2>/dev/null
+
+hr() { echo "------------------------------------------------------------"; }
+ok() { echo "  [ok]   $*"; }
+bad() { echo "  [!!]   $*"; }
+
+echo "LinkPilot 自检"
+hr
+
+# ------------------------------------------------------------------ 身份
+echo "固件"
+echo "  版本      $(cat /etc/linkpilot/version 2>/dev/null || echo '未知')"
+echo "  基线      $(cat /etc/linkpilot/openwrt-version 2>/dev/null || echo '未知')"
+echo "  型号      $(cat /sys/devices/virtual/dmi/id/product_name 2>/dev/null || echo '未知')"
+echo "  内核      $(uname -r)  ($(uname -m))"
+echo "  运行时长  $(uptime | sed 's/.*up //; s/,.*load/ load/')"
+echo "  主机名    $(uci -q get system.@system[0].hostname)"
+
+# ------------------------------------------------------------------ 网口
+echo "网口"
+for n in /sys/class/net/*; do
+	ifc=${n##*/}
+	case "$ifc" in lo|br-*|tun*|tap*|wg*) continue ;; esac
+	[ -e "/sys/class/net/$ifc/device" ] || continue
+	carrier=$(cat "/sys/class/net/$ifc/carrier" 2>/dev/null || echo 0)
+	ip4=$(ip -4 -o addr show dev "$ifc" 2>/dev/null | awk '{print $4}')
+	speed=$(ethtool "$ifc" 2>/dev/null | sed -n 's/.*Speed: //p')
+	state="未插线"
+	[ "$carrier" = "1" ] && state="link ${speed:-?}"
+	echo "  $ifc  $state  ${ip4:--}"
+done
+[ -s /etc/linkpilot/nic-warning ] && bad "网口识别告警：$(cat /etc/linkpilot/nic-warning)"
+
+# ------------------------------------------------------------------ 网络
+echo "局域网"
+LAN_IP=$(uci -q get network.lan.ipaddr)
+echo "  网关      ${LAN_IP:-未配置}"
+echo "  DHCP 池   $(uci -q get dhcp.lan.start)-$(( $(uci -q get dhcp.lan.start 2>/dev/null || echo 100) + $(uci -q get dhcp.lan.limit 2>/dev/null || echo 0) - 1 ))"
+echo "  在线租约  $(wc -l < /tmp/dhcp.leases 2>/dev/null || echo 0) 台"
+V6=$(ip -6 addr show scope global 2>/dev/null | grep -c inet6)
+if [ "$V6" = "0" ]; then ok "IPv6 已关闭（无全局地址）"; else bad "存在 $V6 个全局 IPv6 地址，检查三层关闭"; fi
+
+# ------------------------------------------------------------------ Agent
+echo "Agent"
+if [ -f /etc/linkpilot/paused ]; then
+	bad "处于暂停状态（/etc/linkpilot/paused），现场执行 lp-rescue resume 恢复"
+fi
+PID=$(pidof node 2>/dev/null | awk '{print $1}')
+if [ -n "$PID" ]; then
+	ok "进程运行中 pid=$PID  内存 $(awk '/VmRSS/{printf "%dMB", $2/1024}' /proc/$PID/status 2>/dev/null)"
+else
+	bad "进程未运行（logread -e linkpilot 看原因）"
+fi
+echo "  云端      ${LP_CLOUD_URL:-未配置}"
+CODE=$(curl -s -o /dev/null -m 4 -w '%{http_code}' "${LP_CLOUD_URL:-http://127.0.0.1:1}" 2>/dev/null || echo 000)
+if [ "$CODE" = "000" ]; then bad "云端不可达（控制通道断了，本地策略仍在跑）"; else ok "云端可达 HTTP $CODE"; fi
+
+DEVICE_ID=$(sed -n 's/.*"deviceId": *"\([^"]*\)".*/\1/p' /etc/linkpilot/data/state.json 2>/dev/null | head -1)
+if [ -n "$DEVICE_ID" ]; then ok "已注册 deviceId=$DEVICE_ID"; else bad "未注册（lp-enroll <云端地址> <令牌>）"; fi
+
+ACTIVE=/etc/linkpilot/data/routing/active.json
+if [ -r "$ACTIVE" ]; then
+	REV=$(sed -n 's/.*"revision": *\([0-9]*\).*/\1/p' "$ACTIVE" | head -1)
+	ok "当前生效版本 r${REV:-?}   $(ls /etc/linkpilot/data/routing 2>/dev/null | grep -c '^r[0-9]') 个版本在本地"
+else
+	bad "还没有任何生效版本（云端未下发或从未应用成功）"
+fi
+
+# ------------------------------------------------------------------ 数据面
+echo "数据面"
+if pidof sing-box >/dev/null 2>&1; then ok "sing-box 运行中"; else bad "sing-box 未运行（分流不会生效，但 Kill Switch 仍按上次规则生效）"; fi
+if nft list tables 2>/dev/null | grep -q 'ip linkpilot\|table inet'; then ok "nftables 规则已加载"; else bad "没有 nftables 规则，转发可能不受控"; fi
+if curl -s -o /dev/null -m 4 -w '%{http_code}' http://127.0.0.1:8088/ 2>/dev/null | grep -qE '200|302|401'; then
+	ok "本地门户在 $(ip -4 -o addr show dev br-lan 2>/dev/null | awk '{print $4}' | cut -d/ -f1):${LP_PORTAL_PORT:-8088} 有响应"
+else
+	bad "本地门户无响应"
+fi
+
+# ------------------------------------------------------------------ 温度
+echo "温度"
+SENSORS=$(sensors 2>/dev/null | grep -E 'Package id 0|Core 0' | head -2)
+if [ -n "$SENSORS" ]; then echo "$SENSORS" | sed 's/^/  /'; else echo "  无传感器数据（BIOS/内核未暴露，N100 建议进 BIOS 确认）"; fi
+
+hr
+echo "日志：logread -e linkpilot | tail -50"
+echo "救急：lp-rescue（暂停 Agent + 清规则 + 恢复直连）"

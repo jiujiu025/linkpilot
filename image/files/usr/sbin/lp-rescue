@@ -1,0 +1,71 @@
+#!/bin/sh
+#
+# LinkPilot 现场救急。
+#
+# 场景：Agent 下发了一套把 LAN 管理面也挡住的规则，或者代理配置把设备搞到不可用，
+# 现场只有 SSH/控制台。这个脚本负责把设备拉回"可运维"状态，而且**不丢授权数据**。
+#
+#   lp-rescue            暂停 Agent、停代理、清规则、恢复直连与 SSH/LuCI
+#   lp-rescue resume     取消暂停，重新拉起 Agent（会按云端最新配置再应用一次）
+#   lp-rescue status     看当前是不是被暂停了
+#
+# 注意：暂停标记会跨重启保留（procd 启动时检查）。交付前务必 resume，
+# 否则下次重启看起来像"设备坏了"。
+
+PAUSE_FLAG=/etc/linkpilot/paused
+
+usage() {
+	echo "用法: lp-rescue [pause|resume|status]"
+	echo "  pause   暂停 Agent、停代理、清 nftables、恢复 fw4 与直连"
+	echo "  resume  取消暂停并重启 Agent"
+	echo "  status  查看当前状态"
+}
+
+do_pause() {
+	echo "[1/4] 打暂停标记 $PAUSE_FLAG"
+	touch "$PAUSE_FLAG"
+
+	echo "[2/4] 停止 Agent 与代理核心"
+	/etc/init.d/linkpilot stop 2>/dev/null
+	[ -x /etc/init.d/sing-box ] && /etc/init.d/sing-box stop 2>/dev/null
+
+	echo "[3/4] 清空当前 nftables 规则集"
+	nft flush ruleset 2>/dev/null || echo "     nft 不可用或已为空"
+
+	echo "[4/4] 恢复基础防火墙与网络"
+	/etc/init.d/firewall restart 2>/dev/null
+	/etc/init.d/network reload 2>/dev/null
+	sleep 2
+
+	echo
+	echo "已恢复直连。SSH/LuCI 应可从 LAN 访问："
+	ip -4 -o addr show dev br-lan 2>/dev/null | awk '{print "  网关 " $4}'
+	echo
+	echo "处理完执行 lp-rescue resume 交还给云端控制。"
+}
+
+do_resume() {
+	echo "取消暂停并重启 Agent"
+	rm -f "$PAUSE_FLAG"
+	/etc/init.d/linkpilot restart 2>/dev/null
+	sleep 2
+	pidof node >/dev/null 2>&1 && echo "Agent 已启动" || echo "Agent 未起来，看 logread -e linkpilot"
+}
+
+do_status() {
+	if [ -f "$PAUSE_FLAG" ]; then
+		echo "状态：已暂停（$PAUSE_FLAG 存在）——设备当前是直连，云端管不到"
+	else
+		echo "状态：正常（未暂停）"
+	fi
+	pidof node >/dev/null 2>&1 && echo "Agent：运行中 pid=$(pidof node)" || echo "Agent：未运行"
+	pidof sing-box >/dev/null 2>&1 && echo "代理：运行中" || echo "代理：未运行"
+}
+
+case "${1:-pause}" in
+	pause) do_pause ;;
+	resume) do_resume ;;
+	status) do_status ;;
+	-h|--help|help) usage ;;
+	*) usage; exit 1 ;;
+esac

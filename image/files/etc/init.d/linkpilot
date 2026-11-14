@@ -1,0 +1,46 @@
+#!/bin/sh /etc/rc.common
+#
+# LinkPilot Agent 服务（procd 托管）
+#
+# 只负责把 /opt/linkpilot/agent.mjs 拉起来并看住它：
+#   - 崩溃后自动重启（5 秒内连续崩 5 次才放弃，避免坏配置把设备打死循环）；
+#   - /etc/linkpilot/paused 存在时不启动，用于现场救急（lp-rescue）；
+#   - 真正干活的逻辑全在 Agent 里，这里不写业务。
+#
+START=99
+STOP=05
+USE_PROCD=1
+
+start_service() {
+	if [ -f /etc/linkpilot/paused ]; then
+		logger -t linkpilot "agent 处于暂停状态（/etc/linkpilot/paused），跳过启动"
+		return 0
+	fi
+	if [ ! -x /usr/bin/node ]; then
+		logger -t linkpilot "缺少 node 运行时，无法启动 Agent"
+		return 1
+	fi
+	if [ ! -f /opt/linkpilot/agent.mjs ]; then
+		logger -t linkpilot "缺少 /opt/linkpilot/agent.mjs，固件不完整"
+		return 1
+	fi
+
+	procd_open_instance agent
+	procd_set_param command /usr/sbin/lp-agent-run
+	procd_set_param respawn 3600 5 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_set_param limits core="0 0"
+	procd_set_param file /opt/linkpilot/agent.mjs
+	procd_set_param file /etc/linkpilot/agent.env
+	procd_close_instance
+}
+
+stop_service() {
+	logger -t linkpilot "agent 停止"
+}
+
+reload_service() {
+	stop
+	start
+}

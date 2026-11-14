@@ -1,0 +1,28 @@
+# LinkPilot 固件包清单（x86/64, OpenWrt 24.10）
+# 每行一个包名，# 开头为注释；build-inner.sh 会去掉注释与空行。
+# 加包前先确认包在该版本 feed 里真实存在（packages/x86_64/<feed>/Packages），
+# 名字写错的后果是整次构建在 30 分钟后才失败。
+
+# ---- 运行时（Agent 与策略执行的最小依赖）----
+node                     # Agent 运行时；24.10 上为 20.x，Agent 已打包成单文件，不依赖 TS strip-types
+nftables-json            # 提供 nft 命令（Provides: nftables），防火墙规则执行体
+kmod-nft-tproxy          # tun/tproxy 与 DNS 劫持需要
+kmod-nft-nat             # dnat 把 53 端口送进 tun
+kmod-tun                 # sing-box tun 入站
+sing-box                 # 代理核心
+dnsmasq-full             # DHCP + DNS，full 版才有需要的能力
+ca-bundle                # TLS 根证书，云端与线路握手都要
+curl                     # 云端连通性自检
+
+# ---- 诊断（现场没有这些等于瞎跑）----
+irqbalance               # N100 多队列网卡把软中断摊到多核，避免单核打满
+ethtool                  # 看网口速率/协商，2.5G 掉成 100M 是高频故障
+tcpdump                  # 抓包定位 DNS 泄漏与分流是否命中
+bind-dig                 # 验证 DNS 是否真的进了 tun
+conntrack                # 看连接是否走了预期出站
+htop
+lm-sensors               # N100 温度，无风扇盒子长时间跑要盯
+
+# ---- 运维界面（局域网内使用；量产可去掉，客户侧只用门户）----
+luci
+luci-app-firewall

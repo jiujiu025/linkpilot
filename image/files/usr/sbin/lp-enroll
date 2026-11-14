@@ -1,0 +1,41 @@
+#!/bin/sh
+#
+# 现场注册：把云端地址与一次性令牌写进 /etc/linkpilot/agent.env 并重启 Agent。
+#
+#   lp-enroll https://cloud.example.com <令牌>
+#
+# 令牌是一次性的，注册成功后建议清掉：
+#   sed -i 's/^LP_ENROLL_TOKEN=.*/LP_ENROLL_TOKEN=/' /etc/linkpilot/agent.env
+
+usage() {
+	echo "用法: lp-enroll <云端地址> <一次性令牌>"
+	echo "  示例: lp-enroll https://cloud.example.com 7f3a-...(令牌)"
+}
+
+[ $# -eq 2 ] || { usage; exit 1; }
+URL="$1"
+TOKEN="$2"
+
+case "$URL" in
+	http://*|https://*) ;;
+	*) echo "云端地址必须以 http:// 或 https:// 开头" >&2; exit 1 ;;
+esac
+[ -f /etc/linkpilot/agent.env ] || { echo "缺少 /etc/linkpilot/agent.env，固件不完整" >&2; exit 1; }
+
+# 用 | 做分隔符，避免 URL 里的 / 破坏 sed
+sed -i "s|^LP_CLOUD_URL=.*|LP_CLOUD_URL=${URL}|" /etc/linkpilot/agent.env
+if grep -q '^LP_ENROLL_TOKEN=' /etc/linkpilot/agent.env; then
+	sed -i "s|^LP_ENROLL_TOKEN=.*|LP_ENROLL_TOKEN=${TOKEN}|" /etc/linkpilot/agent.env
+else
+	printf 'LP_ENROLL_TOKEN=%s\n' "$TOKEN" >> /etc/linkpilot/agent.env
+fi
+chmod 600 /etc/linkpilot/agent.env
+
+echo "已写入配置，重启 Agent"
+/etc/init.d/linkpilot restart
+sleep 5
+if grep -q '"deviceId"' /etc/linkpilot/data/state.json 2>/dev/null; then
+	echo "注册成功，执行 lp-status 查看接管状态"
+else
+	echo "还没注册成功，看日志：logread -e linkpilot | tail -20"
+fi

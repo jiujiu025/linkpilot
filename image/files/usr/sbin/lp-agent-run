@@ -1,0 +1,20 @@
+#!/bin/sh
+#
+# procd 调用的启动包装。
+#
+# 存在的理由：Agent 的配置（云端地址、注册令牌）放在 /etc/linkpilot/agent.env，
+# 用 set -a 一次性导入，避免把密钥拼进命令行（ps 里看不到），
+# 也避免在 init 脚本里处理 procd 传 env 时的引号地狱。
+set -a
+[ -r /etc/linkpilot/agent.env ] && . /etc/linkpilot/agent.env
+set +a
+
+LP_AGENT_DIR="${LP_AGENT_DIR:-/etc/linkpilot/data}"
+LP_DRY_RUN="${LP_DRY_RUN:-0}"
+LP_PORTAL_HOST="${LP_PORTAL_HOST:-0.0.0.0}"
+LP_PORTAL_PORT="${LP_PORTAL_PORT:-8088}"
+export LP_AGENT_DIR LP_DRY_RUN LP_PORTAL_HOST LP_PORTAL_PORT
+
+mkdir -p "$LP_AGENT_DIR"
+
+exec /usr/bin/node /opt/linkpilot/agent.mjs

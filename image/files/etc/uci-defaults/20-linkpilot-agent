@@ -1,0 +1,30 @@
+#!/bin/sh
+#
+# LinkPilot 首启收尾（uci-defaults，执行成功后自动删除）
+# 只做「让 Agent 能被 procd 拉起来」的准备，不碰网络与业务配置。
+#
+# 注意：uci-defaults 在 boot 阶段执行，此时 network 还没起来，所以这里不 restart，
+# 启动顺序交给 rc.d 里的 S99linkpilot（镜像内已建好符号链接）。
+
+log() { logger -t linkpilot "$*"; }
+
+mkdir -p /etc/linkpilot/data/routing
+chmod 700 /etc/linkpilot/data
+[ -f /etc/linkpilot/agent.env ] && chmod 600 /etc/linkpilot/agent.env
+
+# 权限兜底：Windows 上检出的文件权限不可靠，build-inner.sh 也会纠正一次
+for f in /etc/init.d/linkpilot /usr/sbin/lp-agent-run /usr/sbin/lp-status /usr/sbin/lp-rescue /usr/sbin/lp-enroll; do
+	[ -f "$f" ] && chmod 0755 "$f"
+done
+
+if [ ! -x /usr/bin/node ]; then
+	log "缺少 /usr/bin/node，Agent 无法启动（检查 image/packages.list 里的 node）"
+fi
+
+# LuCI 只给运维在局域网内用；默认配置本来就只监听 LAN，这里保持不动。
+# 门户（8088）与 LuCI 的可达性由 Agent 下发的 nftables 规则决定。
+
+/etc/init.d/linkpilot enable 2>/dev/null
+
+log "Agent 已启用：配置 /etc/linkpilot/agent.env，自检 lp-status"
+exit 0
