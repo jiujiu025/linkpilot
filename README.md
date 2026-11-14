@@ -4,7 +4,11 @@
 
 当前交付形态为 **N100 网关 + 外置 AP**（不是 AX3000T 一体机），系统基线与稳定性设计见 `docs/design/10`；单 SSID 下「账号登录 → 指定出口线路」的接入模型见 `docs/design/11`。
 
-**要把这套跑到真机上**：装完 Debian，`sudo bash scripts/install.sh` 一条命令搞定（Node、sing-box、网桥、服务、自检全包）。
+**要把这套跑到真机上**：装完 Debian，一条命令搞定（Node、sing-box、网桥、服务、自检全包）：
+
+```bash
+sudo bash -c 'apt-get install -y git >/dev/null 2>&1; git clone --depth 1 https://github.com/jiujiu025/linkpilot.git /opt/linkpilot && bash /opt/linkpilot/scripts/install.sh'
+```
 细节见 `docs/ops/N100部署手册.md`；日常操作（后台、批量导入、测速、账号）见 `docs/ops/操作手册.md`。
 
 设计与边界以 `docs/软路由产品设计方案.md` 与 `docs/design/` 为准；本文只讲代码怎么跑、哪里能改。
