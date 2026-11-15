@@ -116,7 +116,9 @@ export function renderAdminHtml(): string {
     <textarea id="nodesText" rows="8" placeholder="ss://YWVzLTI1Ni1nY206cGFzcy0xMjM0NTY=@1.2.3.4:8388#美国-洛杉矶-01&#10;trojan://pass-abcdef@hk.example.com:443?sni=hk.example.com#香港-01&#10;vless://uuid-xxxx@jp.example.com:443?security=tls&type=ws&path=/ray&sni=jp.example.com#日本-东京-01" style="width:100%;font-family:ui-monospace,monospace;padding:8px"></textarea>
     <div class="row">
       <label>账号前缀</label>
-      <input id="accPrefix" value="jy" style="width:90px" />
+      <input id="accPrefix" value="jy" style="width:80px" />
+      <label>统一密码</label>
+      <input id="accPasswd" placeholder="留空则随机 10 位" style="width:180px" />
       <button class="primary" id="importNodes">识别并生成线路 + 账号</button>
       <span id="nodeResult" class="hint"></span>
     </div>
@@ -376,7 +378,11 @@ export function renderAdminHtml(): string {
     if (!text.trim()) { fail(new Error('先粘贴链接')); return; }
     api('/api/admin/import/nodes', {
       method: 'POST',
-      body: { text: text, accountPrefix: document.getElementById('accPrefix').value.trim() || 'jy' }
+      body: {
+        text: text,
+        accountPrefix: document.getElementById('accPrefix').value.trim() || 'jy',
+        password: document.getElementById('accPasswd').value.trim() || undefined
+      }
     }).then(function (data) {
       var msg = '识别 ' + data.detected + ' 条，新建线路 ' + data.linesCreated +
         ' 条，复用 ' + data.linesReused + ' 条，账号 ' + data.accounts.length + ' 个';

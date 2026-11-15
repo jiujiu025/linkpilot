@@ -1043,8 +1043,14 @@ export function createControlPlane(config: ControlConfig): ControlPlane {
       accountPrefix?: string;
       createAccounts?: boolean;
       switchMode?: boolean;
+      /** 统一密码：留空则每个账号随机生成 10 位 */
+      password?: string;
     };
     const parsed = parseNodeList(String(body.text ?? ''), { idPrefix: body.idPrefix || 'line' });
+    const fixedPassword = String(body.password ?? '').trim();
+    if (fixedPassword && fixedPassword.length < 8) {
+      throw new AppError('BAD_REQUEST', '统一密码至少 8 位');
+    }
     const accountPrefix = (body.accountPrefix || 'jy').trim();
     const wantAccounts = body.createAccounts !== false;
 
@@ -1102,7 +1108,11 @@ export function createControlPlane(config: ControlConfig): ControlPlane {
         }
         usedNames.add(username);
         let password = '';
-        for (let i = 0; i < 10; i += 1) password += alphabet[randomInt(alphabet.length)];
+        if (fixedPassword) {
+          password = fixedPassword;
+        } else {
+          for (let i = 0; i < 10; i += 1) password += alphabet[randomInt(alphabet.length)];
+        }
         newAccounts.push({
           id: `acc-${randomHex(4)}`,
           username,
