@@ -322,6 +322,15 @@ export const LanConfig = z.object({
    * 也就是说：想让已认证设备互访，必须同时关掉 AP 的客户端隔离，不然二层就断了。
    */
   allowClientToClient: z.boolean().default(true),
+  /**
+   * 允许从 LAN 侧访问的管理端口（默认 22）。
+   *
+   * 这条不是可选项：转发链与入站链默认 drop，如果不放通 22，
+   * Agent 一应用配置 SSH 立刻断，人只能抱着显示器去机房。
+   */
+  managementPorts: z.array(z.number().int().min(1).max(65535)).default([22]),
+  /** 是否允许从 WAN 侧访问管理端口；默认关，只有明确需要远程运维时才开 */
+  allowWanManagement: z.boolean().default(false),
   tunName: z.string().default('lp-tun'),
   tunCidr: z.string().default('172.19.0.1/30'),
   /** 代理出站统一使用的本地 DNS 监听端口 */

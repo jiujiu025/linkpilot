@@ -231,6 +231,16 @@ export function validateArtifacts(input: ValidationInput): Violation[] {
     err('WIFI_ENABLED_BUT_MISSING', '设备声明启用无线，但 UCI 片段没有 wireless 配置', 'uci.wireless');
   }
 
+  /* -------------------------------------------------------- 自锁检查 */
+
+  if (state.lan.managementPorts.length === 0 && !state.lan.allowWanManagement) {
+    warn(
+      'NO_MANAGEMENT_PORT',
+      '入站链默认 drop 且没有放通任何管理端口；应用后 SSH 会断，只能本地控制台登录',
+      'lan.managementPorts',
+    );
+  }
+
   /* ---------------------------------------------------------- 容量检查 */
 
   if (state.accessControl.mode === 'session') {

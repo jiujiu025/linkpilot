@@ -153,6 +153,16 @@ export function buildNftables({ plan, state, now }: NftablesBuildInput): string 
     `\t\tiifname "${lan.lanInterface}" tcp dport { ${portalPorts} } counter accept comment "本地门户"`,
   );
   parts.push(`\t\tiifname "${lan.lanInterface}" icmp type { echo-request } counter accept`);
+  // 管理面：不放通就等于把自己锁在门外（转发链与入站链都是默认 drop）
+  if (lan.managementPorts.length > 0) {
+    const ports = [...new Set(lan.managementPorts)].sort((a, b) => a - b).join(', ');
+    parts.push(
+      `\t\tiifname "${lan.lanInterface}" tcp dport { ${ports} } counter accept comment "管理端口（SSH 等）"`,
+    );
+    if (lan.allowWanManagement) {
+      parts.push(`\t\ttcp dport { ${ports} } counter accept comment "WAN 侧管理端口（显式开启）"`);
+    }
+  }
   if (plan.sessionMode && tproxyPorts.length > 0) {
     parts.push(
       `\t\tiifname "${lan.lanInterface}" meta l4proto { tcp, udp } th dport { ${tproxyPorts} } counter accept comment "tproxy 入站：已登录会话的就地交付端口"`,

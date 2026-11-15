@@ -96,6 +96,8 @@ export function buildFixtureState(overrides: Partial<DesiredState> = {}): Desire
       lanPorts: [],
       wanPort: '',
       allowClientToClient: true,
+      managementPorts: [22],
+      allowWanManagement: false,
       tunName: 'lp-tun',
       tunCidr: '172.19.0.1/30',
       dnsPort: 5353,
